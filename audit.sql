@@ -47,7 +47,7 @@ CREATE TABLE audit.logged_actions (
     application_name text,
     client_addr inet,
     client_port integer,
-    client_query text not null,
+    client_query text,
     action TEXT NOT NULL CHECK (action IN ('I','D','U', 'T')),
     row_data hstore,
     changed_fields hstore,
