@@ -9,6 +9,8 @@
 -- This trigger was originally based on
 --   http://wiki.postgresql.org/wiki/Audit_trigger
 -- but has been completely rewritten.
+--
+-- Should really be converted into a relocatable EXTENSION, with control and upgrade files.
 
 CREATE EXTENSION IF NOT EXISTS hstore;
 
