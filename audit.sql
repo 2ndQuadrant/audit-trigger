@@ -12,8 +12,6 @@
 --
 -- Should really be converted into a relocatable EXTENSION, with control and upgrade files.
 
-CREATE EXTENSION IF NOT EXISTS hstore;
-
 CREATE SCHEMA audit;
 REVOKE ALL ON SCHEMA audit FROM public;
 
@@ -29,7 +27,7 @@ COMMENT ON SCHEMA audit IS 'Out-of-table audit/history logging tables and trigge
 -- inserts.
 --
 -- Every index you add has a big impact too, so avoid adding indexes to the
--- audit table unless you REALLY need them. The hstore GIST indexes are
+-- audit table unless you REALLY need them. The jsonb GIST indexes are
 -- particularly expensive.
 --
 -- It is sometimes worth copying the audit table, or a coarse subset of it that
@@ -51,8 +49,8 @@ CREATE TABLE audit.logged_actions (
     client_port integer,
     client_query text,
     action TEXT NOT NULL CHECK (action IN ('I','D','U', 'T')),
-    row_data hstore,
-    changed_fields hstore,
+    row_data jsonb,
+    changed_fields jsonb,
     statement_only boolean not null
 );
 
@@ -81,13 +79,29 @@ CREATE INDEX logged_actions_relid_idx ON audit.logged_actions(relid);
 CREATE INDEX logged_actions_action_tstamp_tx_stm_idx ON audit.logged_actions(action_tstamp_stm);
 CREATE INDEX logged_actions_action_idx ON audit.logged_actions(action);
 
+CREATE OR REPLACE FUNCTION json_object_delete_keys(_json json, VARIADIC _keys TEXT[]) RETURNS json AS $body$
+SELECT json_object_agg(key, value) AS json
+FROM json_each(_json)
+WHERE key != ALL (_keys)
+$body$
+LANGUAGE sql
+IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION json_object_delete_values(_json json, _values json) RETURNS json AS $body$
+SELECT json_object_agg(a.key, a.value) AS json
+FROM json_each_text(_json) a
+JOIN json_each_text(_values) b ON a.key = b.key AND a.value != b.value
+$body$
+LANGUAGE sql
+IMMUTABLE STRICT;
+
 CREATE OR REPLACE FUNCTION audit.if_modified_func() RETURNS TRIGGER AS $body$
 DECLARE
     audit_row audit.logged_actions;
     include_values boolean;
     log_diffs boolean;
-    h_old hstore;
-    h_new hstore;
+    h_old jsonb;
+    h_new jsonb;
     excluded_cols text[] = ARRAY[]::text[];
 BEGIN
     IF TG_WHEN <> 'AFTER' THEN
@@ -120,22 +134,22 @@ BEGIN
     IF TG_ARGV[1] IS NOT NULL THEN
         excluded_cols = TG_ARGV[1]::text[];
     END IF;
-    
+
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
-        audit_row.row_data = hstore(OLD.*);
-        audit_row.changed_fields =  (hstore(NEW.*) - audit_row.row_data) - excluded_cols;
-        IF audit_row.changed_fields = hstore('') THEN
+        audit_row.row_data = row_to_json(OLD)::jsonb;
+        audit_row.changed_fields = json_object_delete_keys(json_object_delete_values(row_to_json(NEW), audit_row.row_data::json), VARIADIC excluded_cols)::jsonb;
+        IF audit_row.changed_fields IS NULL THEN
             -- All changed fields are ignored. Skip this update.
             RETURN NULL;
         END IF;
     ELSIF (TG_OP = 'DELETE' AND TG_LEVEL = 'ROW') THEN
-        audit_row.row_data = hstore(OLD.*) - excluded_cols;
+        audit_row.row_data = json_object_delete_keys(row_to_json(OLD), VARIADIC excluded_cols)::jsonb;
     ELSIF (TG_OP = 'INSERT' AND TG_LEVEL = 'ROW') THEN
-        audit_row.row_data = hstore(NEW.*) - excluded_cols;
+        audit_row.row_data = json_object_delete_keys(row_to_json(NEW), VARIADIC excluded_cols)::jsonb;
     ELSIF (TG_LEVEL = 'STATEMENT' AND TG_OP IN ('INSERT','UPDATE','DELETE','TRUNCATE')) THEN
         audit_row.statement_only = 't';
     ELSE
-        RAISE EXCEPTION '[audit.if_modified_func] - Trigger func added as trigger for unhandled case: %, %',TG_OP, TG_LEVEL;
+        RAISE EXCEPTION '[audit.if_modified_func] - Trigger func added as trigger for unhandled case: %, %', TG_OP, TG_LEVEL;
         RETURN NULL;
     END IF;
     INSERT INTO audit.logged_actions VALUES (audit_row.*);
