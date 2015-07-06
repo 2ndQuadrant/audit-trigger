@@ -232,9 +232,9 @@ $body$ LANGUAGE SQL;
 -- And provide a convenience call wrapper for the simplest case
 -- of row-level logging with no excluded cols and query logging enabled.
 --
-CREATE OR REPLACE FUNCTION audit.audit_table(target_table regclass) RETURNS void AS $$
+CREATE OR REPLACE FUNCTION audit.audit_table(target_table regclass) RETURNS void AS $body$
 SELECT audit.audit_table($1, BOOLEAN 't', BOOLEAN 't');
-$$ LANGUAGE 'sql';
+$body$ LANGUAGE 'sql';
 
 COMMENT ON FUNCTION audit.audit_table(regclass) IS $body$
 Add auditing support to the given table. Row-level changes will be logged with full client query text. No cols are ignored.
