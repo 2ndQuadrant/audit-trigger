@@ -14,7 +14,7 @@
 
 CREATE EXTENSION IF NOT EXISTS hstore;
 
-CREATE SCHEMA audit;
+CREATE SCHEMA IF NOT EXISTS audit;
 REVOKE ALL ON SCHEMA audit FROM public;
 
 COMMENT ON SCHEMA audit IS 'Out-of-table audit/history logging tables and trigger functions';
@@ -36,7 +36,7 @@ COMMENT ON SCHEMA audit IS 'Out-of-table audit/history logging tables and trigge
 -- you're interested in, into a temporary table where you CREATE any useful
 -- indexes and do your analysis.
 --
-CREATE TABLE audit.logged_actions (
+CREATE TABLE IF NOT EXISTS audit.logged_actions (
     event_id bigserial primary key,
     schema_name text not null,
     table_name text not null,
@@ -77,9 +77,9 @@ COMMENT ON COLUMN audit.logged_actions.row_data IS 'Record value. Null for state
 COMMENT ON COLUMN audit.logged_actions.changed_fields IS 'New values of fields changed by UPDATE. Null except for row-level UPDATE events.';
 COMMENT ON COLUMN audit.logged_actions.statement_only IS '''t'' if audit event is from an FOR EACH STATEMENT trigger, ''f'' for FOR EACH ROW';
 
-CREATE INDEX logged_actions_relid_idx ON audit.logged_actions(relid);
-CREATE INDEX logged_actions_action_tstamp_tx_stm_idx ON audit.logged_actions(action_tstamp_stm);
-CREATE INDEX logged_actions_action_idx ON audit.logged_actions(action);
+CREATE INDEX IF NOT EXISTS logged_actions_relid_idx ON audit.logged_actions(relid);
+CREATE INDEX IF NOT EXISTS logged_actions_action_tstamp_tx_stm_idx ON audit.logged_actions(action_tstamp_stm);
+CREATE INDEX IF NOT EXISTS logged_actions_action_idx ON audit.logged_actions(action);
 
 CREATE OR REPLACE FUNCTION audit.if_modified_func() RETURNS TRIGGER AS $body$
 DECLARE
