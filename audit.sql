@@ -36,6 +36,8 @@ COMMENT ON SCHEMA audit IS 'Out-of-table audit/history logging tables and trigge
 -- you're interested in, into a temporary table where you CREATE any useful
 -- indexes and do your analysis.
 --
+DROP TABLE IF EXISTS audit.logged_actions;
+
 CREATE TABLE audit.logged_actions (
     event_id bigserial primary key,
     schema_name text not null,
@@ -49,7 +51,7 @@ CREATE TABLE audit.logged_actions (
     application_name text,
     client_addr inet,
     client_port integer,
-    client_query text,
+    client_query text NOT NULL,
     action TEXT NOT NULL CHECK (action IN ('I','D','U', 'T')),
     row_data hstore,
     changed_fields hstore,
@@ -104,7 +106,7 @@ BEGIN
         statement_timestamp(),                        -- action_tstamp_stm
         clock_timestamp(),                            -- action_tstamp_clk
         txid_current(),                               -- transaction ID
-        current_setting('application_name'),          -- client application
+        (SELECT setting FROM pg_settings WHERE name = 'application_name'),
         inet_client_addr(),                           -- client_addr
         inet_client_port(),                           -- client_port
         current_query(),                              -- top-level query or queries (if multistatement) from client
@@ -239,3 +241,91 @@ $body$ LANGUAGE 'sql';
 COMMENT ON FUNCTION audit.audit_table(regclass) IS $body$
 Add auditing support to the given table. Row-level changes will be logged with full client query text. No cols are ignored.
 $body$;
+
+
+CREATE OR REPLACE FUNCTION audit.replay_event(pevent_id int) RETURNS void AS $body$
+DECLARE
+  query text;
+BEGIN
+    with
+    event as (
+        select * from audit.logged_actions where event_id = pevent_id
+    )
+    -- get primary key names
+    , where_pks as (
+        select array_to_string(array_agg(a.attname || '=' || quote_literal(row_data->a.attname)), ' AND ') as where_clause
+          from pg_index i
+          join pg_attribute a on a.attrelid = i.indrelid
+                             and a.attnum = any(i.indkey)
+          join event on i.indrelid = (schema_name || '.' || table_name)::regclass
+          where         i.indisprimary
+    )
+    select into query
+        case
+            when action = 'I' then
+                'INSERT INTO ' || schema_name || '.' || table_name ||
+                ' ('||(select string_agg(key, ',') from each(row_data))||') VALUES ' ||
+                '('||(select string_agg(case when value is null then 'null' else quote_literal(value) end, ',') from each(row_data))||')'
+            when action = 'D' then
+                'DELETE FROM ' || schema_name || '.' || table_name ||
+                ' WHERE ' || where_clause
+            when action = 'U' then
+                'UPDATE ' || schema_name || '.' || table_name ||
+                ' SET ' || (select string_agg(key || '=' || case when value is null then 'null' else quote_literal(value) end, ',') from each(changed_fields)) ||
+                ' WHERE ' || where_clause
+        end
+    from
+        event, where_pks
+    ;
+    
+    execute query;
+END;
+$body$
+LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION audit.replay_event(int) IS $body$
+Replay a logged event.
+ 
+Arguments:
+   pevent_id:  The event_id of the event in audit.logged_actions to replay
+$body$;
+
+CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, audit_query_text BOOLEAN, ignored_cols text[]) RETURNS void AS $body$
+DECLARE
+  stm_targets text = 'INSERT OR UPDATE OR DELETE OR TRUNCATE';
+  _q_txt text;
+BEGIN
+    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || target_view::text;
+    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_stm ON ' || target_view::text;
+ 
+    _q_txt = 'CREATE TRIGGER audit_trigger_stm AFTER ' || stm_targets || ' ON ' ||
+             target_view::text ||
+             ' FOR EACH STATEMENT EXECUTE PROCEDURE audit.if_modified_func('||
+             quote_literal(audit_query_text) || ');';
+    RAISE NOTICE '%',_q_txt;
+    EXECUTE _q_txt;
+ 
+END;
+$body$
+LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION audit.audit_view(regclass, BOOLEAN, text[]) IS $body$
+ADD auditing support TO a VIEW.
+ 
+Arguments:
+   target_view:     TABLE name, schema qualified IF NOT ON search_path
+   audit_query_text: Record the text of the client query that triggered the audit event?
+   ignored_cols:     COLUMNS TO exclude FROM UPDATE diffs, IGNORE updates that CHANGE only ignored cols.
+$body$;
+ 
+-- Pg doesn't allow variadic calls with 0 params, so provide a wrapper
+CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, audit_query_text BOOLEAN) RETURNS void AS $body$
+SELECT audit.audit_view($1, $2, ARRAY[]::text[]);
+$body$ LANGUAGE SQL;
+ 
+-- And provide a convenience call wrapper for the simplest case
+-- of row-level logging with no excluded cols and query logging enabled.
+--
+CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass) RETURNS void AS $$
+SELECT audit.audit_view($1, BOOLEAN 't');
+$$ LANGUAGE 'sql';
