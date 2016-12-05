@@ -292,7 +292,7 @@ $body$;
 
 CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, audit_query_text BOOLEAN, ignored_cols text[]) RETURNS void AS $body$
 DECLARE
-  stm_targets text = 'INSERT OR UPDATE OR DELETE OR TRUNCATE';
+  stm_targets text = 'INSERT OR UPDATE OR DELETE';
   _q_txt text;
 BEGIN
     EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || target_view::text;
