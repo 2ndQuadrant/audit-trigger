@@ -83,6 +83,16 @@ CREATE INDEX logged_actions_relid_idx ON audit.logged_actions(relid);
 CREATE INDEX logged_actions_action_tstamp_tx_stm_idx ON audit.logged_actions(action_tstamp_stm);
 CREATE INDEX logged_actions_action_idx ON audit.logged_actions(action);
 
+CREATE TABLE audit.logged_relations (
+    relation_name text not null,
+    uid_column text not null,
+    PRIMARY KEY (relation_name, uid_column)
+);
+
+COMMENT ON TABLE audit.logged_relations IS 'Table used to store unique identifier columns for table or views, so that events can be replayed';
+COMMENT ON COLUMN audit.logged_relations.relation_name IS 'Relation (table or view) name (with schema if needed)';
+COMMENT ON COLUMN audit.logged_relations.uid_column IS 'Name of a column that is used to uniquely identify a row in the relation';
+
 CREATE OR REPLACE FUNCTION audit.if_modified_func() RETURNS TRIGGER AS $body$
 DECLARE
     audit_row audit.logged_actions;
@@ -225,6 +235,15 @@ BEGIN
     RAISE NOTICE '%',_q_txt;
     EXECUTE _q_txt;
 
+    -- store primary key names
+    insert into audit.logged_relations (relation_name, uid_column)
+         select target_table, a.attname
+           from pg_index i
+           join pg_attribute a on a.attrelid = i.indrelid
+                              and a.attnum = any(i.indkey)
+          where i.indrelid = target_table::regclass
+            and i.indisprimary
+            ;
 END;
 $body$
 language 'plpgsql';
@@ -266,12 +285,9 @@ BEGIN
     )
     -- get primary key names
     , where_pks as (
-        select array_to_string(array_agg(a.attname || '=' || quote_literal(row_data->a.attname)), ' AND ') as where_clause
-          from pg_index i
-          join pg_attribute a on a.attrelid = i.indrelid
-                             and a.attnum = any(i.indkey)
-          join event on i.indrelid = (schema_name || '.' || table_name)::regclass
-          where         i.indisprimary
+        select array_to_string(array_agg(uid_column || '=' || quote_literal(row_data->uid_column)), ' AND ') as where_clause
+          from audit.logged_relations r
+          join event on relation_name = (schema_name || '.' || table_name)
     )
     select into query
         case
@@ -303,7 +319,7 @@ Arguments:
    pevent_id:  The event_id of the event in audit.logged_actions to replay
 $body$;
 
-CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, audit_query_text BOOLEAN, ignored_cols text[]) RETURNS void AS $body$
+CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, audit_query_text BOOLEAN, ignored_cols text[], uid_cols text[]) RETURNS void AS $body$
 DECLARE
   stm_targets text = 'INSERT OR UPDATE OR DELETE';
   _q_txt text;
@@ -323,28 +339,31 @@ BEGIN
 	RAISE NOTICE '%',_q_txt;
 	EXECUTE _q_txt;
 
- 
+    -- store uid columns
+    insert into audit.logged_relations (relation_name, uid_column)
+         select target_view, unnest(uid_cols);
 END;
 $body$
 LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION audit.audit_view(regclass, BOOLEAN, text[]) IS $body$
+COMMENT ON FUNCTION audit.audit_view(regclass, BOOLEAN, text[], text[]) IS $body$
 ADD auditing support TO a VIEW.
  
 Arguments:
-   target_view:     TABLE name, schema qualified IF NOT ON search_path
+   target_view:      TABLE name, schema qualified IF NOT ON search_path
    audit_query_text: Record the text of the client query that triggered the audit event?
    ignored_cols:     COLUMNS TO exclude FROM UPDATE diffs, IGNORE updates that CHANGE only ignored cols.
+   uid_cols:         COLUMNS to use to uniquely identify a row from the view (in order to replay UPDATE and DELETE)
 $body$;
  
 -- Pg doesn't allow variadic calls with 0 params, so provide a wrapper
-CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, audit_query_text BOOLEAN) RETURNS void AS $body$
-SELECT audit.audit_view($1, $2, ARRAY[]::text[]);
+CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, audit_query_text BOOLEAN, uid_cols text[]) RETURNS void AS $body$
+SELECT audit.audit_view($1, $2, ARRAY[]::text[], uid_cols);
 $body$ LANGUAGE SQL;
  
 -- And provide a convenience call wrapper for the simplest case
 -- of row-level logging with no excluded cols and query logging enabled.
 --
-CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass) RETURNS void AS $$
-SELECT audit.audit_view($1, BOOLEAN 't');
+CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, uid_cols text[]) RETURNS void AS $$
+SELECT audit.audit_view($1, BOOLEAN 't', uid_cols);
 $$ LANGUAGE 'sql';
