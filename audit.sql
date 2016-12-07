@@ -129,41 +129,50 @@ BEGIN
 
     IF NOT TG_ARGV[0]::boolean IS DISTINCT FROM 'f'::boolean THEN
         audit_row.client_query = NULL;
-        --RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with no client_query tracking';
+        RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with no client_query tracking';
 
     END IF;
 
     IF TG_ARGV[1] IS NOT NULL THEN
         excluded_cols = TG_ARGV[1]::text[];
-        --RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with excluded_cols: %',TG_ARGV[1];
-
+        RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with excluded_cols: %',TG_ARGV[1];
     END IF;
     
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
         h_old = hstore(OLD.*) - excluded_cols;
         audit_row.row_data = h_old;
-  h_new = hstore(NEW.*)- excluded_cols;
-  audit_row.changed_fields =  h_new - h_old;
+        h_new = hstore(NEW.*)- excluded_cols;
+        audit_row.changed_fields =  h_new - h_old;
 
         IF audit_row.changed_fields = hstore('') THEN
             -- All changed fields are ignored. Skip this update.
             RAISE WARNING '[audit.if_modified_func] - Trigger detected NULL hstore. ending';
-            RETURN NEW;
+            RETURN NULL;
         END IF;
+  INSERT INTO audit.logged_actions VALUES (audit_row.*);
+  RETURN NEW;
+        
     ELSIF (TG_OP = 'DELETE' AND TG_LEVEL = 'ROW') THEN
         audit_row.row_data = hstore(OLD.*) - excluded_cols;
+  INSERT INTO audit.logged_actions VALUES (audit_row.*);
         RETURN OLD;
+        
     ELSIF (TG_OP = 'INSERT' AND TG_LEVEL = 'ROW') THEN
         audit_row.row_data = hstore(NEW.*) - excluded_cols;
+  INSERT INTO audit.logged_actions VALUES (audit_row.*);
         RETURN NEW;
+
     ELSIF (TG_LEVEL = 'STATEMENT' AND TG_OP IN ('INSERT','UPDATE','DELETE','TRUNCATE')) THEN
         audit_row.statement_only = 't';
+        INSERT INTO audit.logged_actions VALUES (audit_row.*);
   RETURN NULL;
+
     ELSE
         RAISE EXCEPTION '[audit.if_modified_func] - Trigger func added as trigger for unhandled case: %, %',TG_OP, TG_LEVEL;
         RETURN NEW;
     END IF;
-    INSERT INTO audit.logged_actions VALUES (audit_row.*);
+
+
 END;
 $body$
 LANGUAGE plpgsql
