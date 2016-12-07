@@ -142,8 +142,8 @@ BEGIN
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
         h_old = hstore(OLD.*) - excluded_cols;
         audit_row.row_data = h_old;
-	h_new = hstore(NEW.*)- excluded_cols;
-	audit_row.changed_fields =  h_new - h_old;
+  h_new = hstore(NEW.*)- excluded_cols;
+  audit_row.changed_fields =  h_new - h_old;
 
         IF audit_row.changed_fields = hstore('') THEN
             -- All changed fields are ignored. Skip this update.
@@ -152,16 +152,18 @@ BEGIN
         END IF;
     ELSIF (TG_OP = 'DELETE' AND TG_LEVEL = 'ROW') THEN
         audit_row.row_data = hstore(OLD.*) - excluded_cols;
+        RETURN OLD;
     ELSIF (TG_OP = 'INSERT' AND TG_LEVEL = 'ROW') THEN
         audit_row.row_data = hstore(NEW.*) - excluded_cols;
+        RETURN NEW;
     ELSIF (TG_LEVEL = 'STATEMENT' AND TG_OP IN ('INSERT','UPDATE','DELETE','TRUNCATE')) THEN
         audit_row.statement_only = 't';
+  RETURN NULL;
     ELSE
         RAISE EXCEPTION '[audit.if_modified_func] - Trigger func added as trigger for unhandled case: %, %',TG_OP, TG_LEVEL;
         RETURN NEW;
     END IF;
     INSERT INTO audit.logged_actions VALUES (audit_row.*);
-    RETURN NEW;
 END;
 $body$
 LANGUAGE plpgsql
