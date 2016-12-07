@@ -339,9 +339,12 @@ BEGIN
 	RAISE NOTICE '%',_q_txt;
 	EXECUTE _q_txt;
 
-    -- store uid columns
-    insert into audit.logged_relations (relation_name, uid_column)
-         select target_view, unnest(uid_cols);
+    -- store uid columns if not already present
+  IF (select count(*) from audit.logged_relations where relation_name = (select target_view)::text AND  uid_column= (select unnest(uid_cols))::text) = 0 THEN
+      insert into audit.logged_relations (relation_name, uid_column)
+       select target_view, unnest(uid_cols);
+  END IF;    
+
 END;
 $body$
 LANGUAGE plpgsql;
