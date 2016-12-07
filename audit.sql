@@ -1,4 +1,4 @@
--- An audit history is important on most tables. Provide an audit trigger that logs to
+﻿-- An audit history is important on most tables. Provide an audit trigger that logs to
 -- a dedicated audit table for the major relations.
 --
 -- This file should be generic and not depend on application roles or structures,
@@ -92,7 +92,9 @@ DECLARE
     h_new hstore;
     excluded_cols text[] = ARRAY[]::text[];
 BEGIN
-    IF TG_WHEN <> 'AFTER' THEN
+    --RAISE WARNING '[audit.if_modified_func] start with TG_ARGV[0]: % ; TG_ARGV[1] : %, TG_OP: %, TG_LEVEL : %, TG_WHEN: % ', TG_ARGV[0], TG_ARGV[1], TG_OP, TG_LEVEL, TG_WHEN;
+
+    IF NOT (TG_WHEN IN ('AFTER' , 'INSTEAD OF')) THEN
         RAISE EXCEPTION 'audit.if_modified_func() may only run as an AFTER trigger';
     END IF;
 
@@ -117,18 +119,26 @@ BEGIN
 
     IF NOT TG_ARGV[0]::boolean IS DISTINCT FROM 'f'::boolean THEN
         audit_row.client_query = NULL;
+        --RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with no client_query tracking';
+
     END IF;
 
     IF TG_ARGV[1] IS NOT NULL THEN
         excluded_cols = TG_ARGV[1]::text[];
+        --RAISE WARNING '[audit.if_modified_func] - Trigger func triggered with excluded_cols: %',TG_ARGV[1];
+
     END IF;
     
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
-        audit_row.row_data = hstore(OLD.*) - excluded_cols;
-        audit_row.changed_fields =  (hstore(NEW.*) - audit_row.row_data) - excluded_cols;
+        h_old = hstore(OLD.*) - excluded_cols;
+        audit_row.row_data = h_old;
+	h_new = hstore(NEW.*)- excluded_cols;
+	audit_row.changed_fields =  h_new - h_old;
+
         IF audit_row.changed_fields = hstore('') THEN
             -- All changed fields are ignored. Skip this update.
-            RETURN NULL;
+            RAISE WARNING '[audit.if_modified_func] - Trigger detected NULL hstore. ending';
+            RETURN NEW;
         END IF;
     ELSIF (TG_OP = 'DELETE' AND TG_LEVEL = 'ROW') THEN
         audit_row.row_data = hstore(OLD.*) - excluded_cols;
@@ -138,10 +148,10 @@ BEGIN
         audit_row.statement_only = 't';
     ELSE
         RAISE EXCEPTION '[audit.if_modified_func] - Trigger func added as trigger for unhandled case: %, %',TG_OP, TG_LEVEL;
-        RETURN NULL;
+        RETURN NEW;
     END IF;
     INSERT INTO audit.logged_actions VALUES (audit_row.*);
-    RETURN NULL;
+    RETURN NEW;
 END;
 $body$
 LANGUAGE plpgsql
@@ -188,15 +198,15 @@ DECLARE
   _q_txt text;
   _ignored_cols_snip text = '';
 BEGIN
-    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || quote_ident(target_table::TEXT);
-    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_stm ON ' || quote_ident(target_table::TEXT);
+    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || target_table::TEXT;
+    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_stm ON ' || target_table::TEXT;
 
     IF audit_rows THEN
         IF array_length(ignored_cols,1) > 0 THEN
             _ignored_cols_snip = ', ' || quote_literal(ignored_cols);
         END IF;
         _q_txt = 'CREATE TRIGGER audit_trigger_row AFTER INSERT OR UPDATE OR DELETE ON ' || 
-                 quote_ident(target_table::TEXT) || 
+                 target_table::TEXT || 
                  ' FOR EACH ROW EXECUTE PROCEDURE audit.if_modified_func(' ||
                  quote_literal(audit_query_text) || _ignored_cols_snip || ');';
         RAISE NOTICE '%',_q_txt;
@@ -294,16 +304,22 @@ CREATE OR REPLACE FUNCTION audit.audit_view(target_view regclass, audit_query_te
 DECLARE
   stm_targets text = 'INSERT OR UPDATE OR DELETE';
   _q_txt text;
+  _ignored_cols_snip text = '';
+
 BEGIN
     EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || target_view::text;
     EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_stm ON ' || target_view::text;
  
-    _q_txt = 'CREATE TRIGGER audit_trigger_stm AFTER ' || stm_targets || ' ON ' ||
-             target_view::text ||
-             ' FOR EACH STATEMENT EXECUTE PROCEDURE audit.if_modified_func('||
-             quote_literal(audit_query_text) || ');';
-    RAISE NOTICE '%',_q_txt;
-    EXECUTE _q_txt;
+	IF array_length(ignored_cols,1) > 0 THEN
+	    _ignored_cols_snip = ', ' || quote_literal(ignored_cols);
+	END IF;
+	_q_txt = 'CREATE TRIGGER audit_trigger_row INSTEAD OF INSERT OR UPDATE OR DELETE ON ' || 
+		 target_view::TEXT || 
+		 ' FOR EACH ROW EXECUTE PROCEDURE audit.if_modified_func(' ||
+		 quote_literal(audit_query_text) || _ignored_cols_snip || ');';
+	RAISE NOTICE '%',_q_txt;
+	EXECUTE _q_txt;
+
  
 END;
 $body$
