@@ -4,7 +4,7 @@
 -- This file should be generic and not depend on application roles or structures,
 -- as it's being listed here:
 --
---    https://wiki.postgresql.org/wiki/Audit_trigger_91plus    
+--    https://wiki.postgresql.org/wiki/Audit_trigger_91plus
 --
 -- This trigger was originally based on
 --   http://wiki.postgresql.org/wiki/Audit_trigger
@@ -50,7 +50,7 @@ CREATE TABLE audit.logged_actions (
     client_addr inet,
     client_port integer,
     client_query text,
-    action TEXT NOT NULL CHECK (action IN ('I','D','U', 'T')),
+    action TEXT NOT NULL CHECK (action IN ('I','D','U','T')),
     row_data hstore,
     changed_fields hstore,
     statement_only boolean not null
@@ -120,7 +120,7 @@ BEGIN
     IF TG_ARGV[1] IS NOT NULL THEN
         excluded_cols = TG_ARGV[1]::text[];
     END IF;
-    
+
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
         audit_row.row_data = hstore(OLD.*) - excluded_cols;
         audit_row.changed_fields =  (hstore(NEW.*) - audit_row.row_data) - excluded_cols;
@@ -175,9 +175,8 @@ want to log row values.
 
 Note that the user name logged is the login role for the session. The audit trigger
 cannot obtain the active role because it is reset by the SECURITY DEFINER invocation
-of the audit trigger its self.
+of the audit trigger itself.
 $body$;
-
 
 
 CREATE OR REPLACE FUNCTION audit.audit_table(target_table regclass, audit_rows boolean, audit_query_text boolean, ignored_cols text[]) RETURNS void AS $body$
@@ -193,8 +192,8 @@ BEGIN
         IF array_length(ignored_cols,1) > 0 THEN
             _ignored_cols_snip = ', ' || quote_literal(ignored_cols);
         END IF;
-        _q_txt = 'CREATE TRIGGER audit_trigger_row AFTER INSERT OR UPDATE OR DELETE ON ' || 
-                 quote_ident(target_table::TEXT) || 
+        _q_txt = 'CREATE TRIGGER audit_trigger_row AFTER INSERT OR UPDATE OR DELETE ON ' ||
+                 quote_ident(target_table::TEXT) ||
                  ' FOR EACH ROW EXECUTE PROCEDURE audit.if_modified_func(' ||
                  quote_literal(audit_query_text) || _ignored_cols_snip || ');';
         RAISE NOTICE '%',_q_txt;
@@ -204,7 +203,7 @@ BEGIN
     END IF;
 
     _q_txt = 'CREATE TRIGGER audit_trigger_stm AFTER ' || stm_targets || ' ON ' ||
-             target_table ||
+             quote_ident(target_table::TEXT) ||
              ' FOR EACH STATEMENT EXECUTE PROCEDURE audit.if_modified_func('||
              quote_literal(audit_query_text) || ');';
     RAISE NOTICE '%',_q_txt;
