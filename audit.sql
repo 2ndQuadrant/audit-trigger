@@ -12,8 +12,6 @@
 --
 -- Should really be converted into a relocatable EXTENSION, with control and upgrade files.
 
-CREATE EXTENSION IF NOT EXISTS hstore;
-
 CREATE SCHEMA audit;
 REVOKE ALL ON SCHEMA audit FROM public;
 
@@ -29,7 +27,7 @@ COMMENT ON SCHEMA audit IS 'Out-of-table audit/history logging tables and trigge
 -- inserts.
 --
 -- Every index you add has a big impact too, so avoid adding indexes to the
--- audit table unless you REALLY need them. The hstore GIST indexes are
+-- audit table unless you REALLY need them. The json GIN/GIST indexes are
 -- particularly expensive.
 --
 -- It is sometimes worth copying the audit table, or a coarse subset of it that
@@ -51,8 +49,8 @@ CREATE TABLE audit.logged_actions (
     client_port integer,
     client_query text,
     action TEXT NOT NULL CHECK (action IN ('I','D','U', 'T')),
-    row_data hstore,
-    changed_fields hstore,
+    row_data jsonb,
+    changed_fields jsonb,
     statement_only boolean not null
 );
 
@@ -86,8 +84,8 @@ DECLARE
     audit_row audit.logged_actions;
     include_values boolean;
     log_diffs boolean;
-    h_old hstore;
-    h_new hstore;
+    h_old jsonb;
+    h_new jsonb;
     excluded_cols text[] = ARRAY[]::text[];
 BEGIN
     IF TG_WHEN <> 'AFTER' THEN
@@ -122,16 +120,23 @@ BEGIN
     END IF;
     
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
-        audit_row.row_data = hstore(OLD.*) - excluded_cols;
-        audit_row.changed_fields =  (hstore(NEW.*) - audit_row.row_data) - excluded_cols;
-        IF audit_row.changed_fields = hstore('') THEN
+        audit_row.row_data = row_to_json(OLD)::JSONB - excluded_cols;
+        
+        --Computing differences
+		SELECT 
+			jsonb_object_agg(tmp_new_row.key, tmp_new_row.value) AS new_data
+			INTO audit_row.changed_fields
+		FROM jsonb_each_text(row_to_json(NEW)::JSONB) AS tmp_new_row 
+		    JOIN jsonb_each_text(audit_row.row_data) AS tmp_old_row ON (tmp_new_row.key = tmp_old_row.key AND tmp_new_row.value IS DISTINCT FROM tmp_old_row.value);
+        
+        IF audit_row.changed_fields = '{}'::JSONB THEN
             -- All changed fields are ignored. Skip this update.
             RETURN NULL;
         END IF;
     ELSIF (TG_OP = 'DELETE' AND TG_LEVEL = 'ROW') THEN
-        audit_row.row_data = hstore(OLD.*) - excluded_cols;
+        audit_row.row_data = row_to_json(OLD)::JSONB - excluded_cols;
     ELSIF (TG_OP = 'INSERT' AND TG_LEVEL = 'ROW') THEN
-        audit_row.row_data = hstore(NEW.*) - excluded_cols;
+        audit_row.row_data = row_to_json(NEW)::JSONB - excluded_cols;
     ELSIF (TG_LEVEL = 'STATEMENT' AND TG_OP IN ('INSERT','UPDATE','DELETE','TRUNCATE')) THEN
         audit_row.statement_only = 't';
     ELSE
