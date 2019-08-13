@@ -4,8 +4,6 @@ CREATE TABLE gis.logged_actions (
     table_name text not null,
     relid oid not null,
     session_user_name text,
-    action_tstamp_tx TIMESTAMP WITH TIME ZONE NOT NULL,
-    action_tstamp_stm TIMESTAMP WITH TIME ZONE NOT NULL,
     action_tstamp_clk TIMESTAMP WITH TIME ZONE NOT NULL,
     transaction_id bigint,
     application_name text,
@@ -58,9 +56,7 @@ BEGIN
         TG_TABLE_NAME::text,                          -- table_name
         TG_RELID,                                     -- relation OID for much quicker searches
         session_user::text,                           -- session_user_name
-        current_timestamp,                            -- action_tstamp_tx
-        statement_timestamp(),                        -- action_tstamp_stm
-        clock_timestamp(),                            -- action_tstamp_clk
+        clock_timestamp() at time zone 'America/Toronto', -- action_tstamp_clk
         txid_current(),                               -- transaction ID
         current_setting('application_name'),          -- client application
         current_query(),                              -- top-level query or queries (if multistatement) from client
