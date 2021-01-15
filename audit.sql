@@ -186,8 +186,7 @@ DECLARE
   _q_txt text;
   _ignored_cols_snip text = '';
 BEGIN
-    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || target_table;
-    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_stm ON ' || target_table;
+    PERFORM deaudit_table(target_table);
 
     IF audit_rows THEN
         IF array_length(ignored_cols,1) > 0 THEN
@@ -239,6 +238,19 @@ $body$ LANGUAGE 'sql';
 COMMENT ON FUNCTION audit.audit_table(regclass) IS $body$
 Add auditing support to the given table. Row-level changes will be logged with full client query text. No cols are ignored.
 $body$;
+
+CREATE OR REPLACE FUNCTION deaudit_table(target_table regclass) RETURNS void AS $body$
+BEGIN
+    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || target_table;
+    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_stm ON ' || target_table;
+END;
+$body$
+language 'plpgsql';
+
+COMMENT ON FUNCTION deaudit_table(regclass) IS $body$
+Remove auditing support to the given table.
+$body$;
+
 
 CREATE OR REPLACE VIEW audit.tableslist AS 
  SELECT DISTINCT triggers.trigger_schema AS schema,
