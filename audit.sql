@@ -216,7 +216,7 @@ END;
 $body$
 language 'plpgsql';
 
-COMMENT ON FUNCTION audit.audit_table(regclass, boolean, boolean, text[]) IS $body$
+COMMENT ON FUNCTION audit.audit_table(regclass, boolean, boolean, boolean, text[]) IS $body$
 Add auditing support to a table.
 
 Arguments:
