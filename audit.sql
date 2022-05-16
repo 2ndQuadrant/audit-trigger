@@ -84,10 +84,6 @@ CREATE INDEX logged_actions_action_idx ON audit.logged_actions(action);
 CREATE OR REPLACE FUNCTION audit.if_modified_func() RETURNS TRIGGER AS $body$
 DECLARE
     audit_row audit.logged_actions;
-    include_values boolean;
-    log_diffs boolean;
-    h_old hstore;
-    h_new hstore;
     excluded_cols text[] = ARRAY[]::text[];
 BEGIN
     IF TG_WHEN <> 'AFTER' THEN
