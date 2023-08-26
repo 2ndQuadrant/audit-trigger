@@ -49,7 +49,8 @@ client_query text,
 action TEXT NOT NULL CHECK (action IN ('I', 'D', 'U', 'T')),
 row_data jsonb,
 changed_fields jsonb,
-statement_only boolean not null
+statement_only boolean not null,
+row_id bigint
 );
 REVOKE ALL ON audit.logged_actions
 FROM public;
@@ -115,7 +116,8 @@ audit_row = ROW(
     NULL,
     NULL,
     -- row_data, changed_fields
-    'f' -- statement_only
+    'f', -- statement_only,
+    COALESCE(OLD.id, NULL) -- pk ID of the row
 );
 IF NOT TG_ARGV [0]::boolean IS DISTINCT
 FROM 'f'::boolean THEN audit_row.client_query = NULL;
