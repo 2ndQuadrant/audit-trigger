@@ -76,13 +76,14 @@ CREATE INDEX logged_actions_relid_idx ON audit.logged_actions(relid);
 CREATE INDEX logged_actions_action_tstamp_tx_stm_idx ON audit.logged_actions(action_tstamp_stm);
 CREATE INDEX logged_actions_action_idx ON audit.logged_actions(action);
 CREATE OR REPLACE FUNCTION audit.if_modified_func() RETURNS TRIGGER AS $body$
-DECLARE audit_row audit.logged_actions;
-include_values boolean;
-log_diffs boolean;
-h_old jsonb;
-h_new jsonb;
-excluded_cols text [] = ARRAY []::text [];
-BEGIN IF TG_WHEN <> 'AFTER' THEN RAISE EXCEPTION 'audit.if_modified_func() may only run as an AFTER trigger';
+DECLARE
+    audit_row audit.logged_actions;
+    include_values boolean;
+    log_diffs boolean;
+    h_old jsonb;
+    h_new jsonb;
+    excluded_cols text [] = ARRAY []::text [];
+    BEGIN IF TG_WHEN <> 'AFTER' THEN RAISE EXCEPTION 'audit.if_modified_func() may only run as an AFTER trigger';
 END IF;
 audit_row = ROW(
     nextval('audit.logged_actions_event_id_seq'),
