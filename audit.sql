@@ -4,7 +4,7 @@
 -- This file should be generic and not depend on application roles or structures,
 -- as it's being listed here:
 --
---    https://wiki.postgresql.org/wiki/Audit_trigger_91plus    
+--    https://wiki.postgresql.org/wiki/Audit_trigger_91plus
 --
 -- This trigger was originally based on
 --   http://wiki.postgresql.org/wiki/Audit_trigger
@@ -53,7 +53,8 @@ CREATE TABLE audit.logged_actions (
     action TEXT NOT NULL CHECK (action IN ('I','D','U', 'T')),
     row_data hstore,
     changed_fields hstore,
-    statement_only boolean not null
+    statement_only boolean not null,
+    row_id bigint
 );
 
 REVOKE ALL ON audit.logged_actions FROM public;
@@ -110,7 +111,8 @@ BEGIN
         current_query(),                              -- top-level query or queries (if multistatement) from client
         substring(TG_OP,1,1),                         -- action
         NULL, NULL,                                   -- row_data, changed_fields
-        'f'                                           -- statement_only
+        'f',                                          -- statement_only
+        COALESCE(OLD.id, NULL)                        -- pk ID of the row
         );
 
     IF NOT TG_ARGV[0]::boolean IS DISTINCT FROM 'f'::boolean THEN
@@ -120,7 +122,7 @@ BEGIN
     IF TG_ARGV[1] IS NOT NULL THEN
         excluded_cols = TG_ARGV[1]::text[];
     END IF;
-    
+
     IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
         audit_row.row_data = hstore(OLD.*) - excluded_cols;
         audit_row.changed_fields =  (hstore(NEW.*) - audit_row.row_data) - excluded_cols;
@@ -193,8 +195,8 @@ BEGIN
         IF array_length(ignored_cols,1) > 0 THEN
             _ignored_cols_snip = ', ' || quote_literal(ignored_cols);
         END IF;
-        _q_txt = 'CREATE TRIGGER audit_trigger_row AFTER INSERT OR UPDATE OR DELETE ON ' || 
-                 target_table || 
+        _q_txt = 'CREATE TRIGGER audit_trigger_row AFTER INSERT OR UPDATE OR DELETE ON ' ||
+                 target_table ||
                  ' FOR EACH ROW EXECUTE PROCEDURE audit.if_modified_func(' ||
                  quote_literal(audit_query_text) || _ignored_cols_snip || ');';
         RAISE NOTICE '%',_q_txt;
@@ -240,11 +242,11 @@ COMMENT ON FUNCTION audit.audit_table(regclass) IS $body$
 Add auditing support to the given table. Row-level changes will be logged with full client query text. No cols are ignored.
 $body$;
 
-CREATE OR REPLACE VIEW audit.tableslist AS 
+CREATE OR REPLACE VIEW audit.tableslist AS
  SELECT DISTINCT triggers.trigger_schema AS schema,
     triggers.event_object_table AS auditedtable
    FROM information_schema.triggers
-    WHERE triggers.trigger_name::text IN ('audit_trigger_row'::text, 'audit_trigger_stm'::text)  
+    WHERE triggers.trigger_name::text IN ('audit_trigger_row'::text, 'audit_trigger_stm'::text)
 ORDER BY schema, auditedtable;
 
 COMMENT ON VIEW audit.tableslist IS $body$
