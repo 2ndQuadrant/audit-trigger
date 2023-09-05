@@ -50,7 +50,7 @@ CREATE TABLE audit.logged_actions (
     client_addr inet,
     client_port integer,
     client_query text,
-    action TEXT NOT NULL CHECK (action IN ('I','D','U', 'T')),
+    action char(1) NOT NULL CHECK (action IN ('I','D','U', 'T')),
     row_data hstore,
     changed_fields hstore,
     statement_only boolean not null
